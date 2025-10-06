@@ -434,3 +434,146 @@ Sekarang, klik tombol "Export ke Excel".
 Browser Anda akan secara otomatis men-download sebuah file .xlsx dengan nama seperti laporan-absensi-harian-2025-10-06.xlsx.
 
 Buka file tersebut dengan Microsoft Excel, Google Sheets, atau aplikasi sejenis. Pastikan datanya sesuai dengan yang ditampilkan di halaman web.
+
+---
+
+## 1. Export Excel Rekap Bulanan (Sisi Admin)
+Tujuannya adalah menambahkan tombol "Export Excel" di halaman laporan bulanan yang akan men-download rekapitulasi dan rincian data yang sedang ditampilkan.
+
+Langkah 1: Membuat Class Export Bulanan
+Kita buat class Export baru yang akan menangani logika untuk laporan bulanan.
+
+Jalankan perintah Artisan ini di terminal:
+
+```Bash
+php artisan make:export MonthlyAttendanceExport
+```
+Buka file app/Exports/MonthlyAttendanceExport.php dan modifikasi isinya. Kita akan menerima employeeId, month, dan year untuk mengambil data yang relevan.
+
+```PHP
+<?php
+
+namespace App\Exports;
+
+use App\Models\Attendance;
+use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithMapping;
+use Carbon\Carbon;
+
+class MonthlyAttendanceExport implements FromCollection, WithHeadings, WithMapping
+{
+    protected $employeeId;
+    protected $month;
+    protected $year;
+
+    public function __construct(int $employeeId, int $month, int $year)
+    {
+        $this->employeeId = $employeeId;
+        $this->month = $month;
+        $this->year = $year;
+    }
+
+    public function collection()
+    {
+        return Attendance::with('employee')
+                         ->where('employee_id', $this->employeeId)
+                         ->whereMonth('date', $this->month)
+                         ->whereYear('date', $this->year)
+                         ->orderBy('date', 'asc')
+                         ->get();
+    }
+
+    public function headings(): array
+    {
+        return [
+            'Tanggal',
+            'Jam Masuk',
+            'Jam Pulang',
+            'Status',
+            'Keterangan',
+        ];
+    }
+
+    public function map($attendance): array
+    {
+        return [
+            Carbon::parse($attendance->date)->isoFormat('dddd, D MMMM Y'),
+            $attendance->time_in,
+            $attendance->time_out,
+            $attendance->status,
+            $attendance->notes,
+        ];
+    }
+}
+```
+Langkah 2: Menambahkan Rute & Method Controller
+Buka routes/web.php dan tambahkan rute untuk memicu download.
+
+```PHP
+// routes/web.php
+Route::middleware(['auth'])->group(function () {
+    // ... rute admin lainnya ...
+    // RUTE BARU UNTUK EXPORT LAPORAN BULANAN
+    Route::get('/admin/reports/monthly/export', [ReportController::class, 'exportMonthlyExcel'])
+            ->name('admin.reports.monthly.export');
+});
+```
+Selanjutnya, buka app/Http/Controllers/Admin/ReportController.php dan tambahkan use statement serta method exportMonthlyExcel.
+
+```PHP
+<?php
+// app/Http/Controllers/Admin/ReportController.php
+namespace App\Http\Controllers\Admin;
+
+// ... use statements lainnya ...
+use App\Exports\MonthlyAttendanceExport; // <-- TAMBAHKAN INI
+
+class ReportController extends Controller
+{
+    // ... (method dailyReport & monthlyReport tidak berubah) ...
+    // ... (method exportExcel tidak berubah) ...
+
+    public function exportMonthlyExcel(Request $request)
+    {
+        $employeeId = $request->input('employee_id');
+        $month = $request->input('month', Carbon::now()->month);
+        $year = $request->input('year', Carbon::now()->year);
+
+        // Validasi: pastikan employee_id ada
+        if (!$employeeId) {
+            return redirect()->route('admin.reports.monthly')->with('error', 'Silakan pilih karyawan terlebih dahulu.');
+        }
+        
+        $employee = Employee::findOrFail($employeeId);
+        $monthName = Carbon::create()->month($month)->isoFormat('MMMM');
+        $fileName = 'laporan-bulanan-' . str_replace(' ', '-', $employee->nama_lengkap) . '-' . $monthName . '-' . $year . '.xlsx';
+
+        return Excel::download(new MonthlyAttendanceExport($employeeId, $month, $year), $fileName);
+    }
+}
+```
+Langkah 3: Menambahkan Tombol di View
+Buka resources/views/admin/reports/monthly.blade.php dan tambahkan tombol export. Tombol ini hanya akan muncul jika sebuah laporan sedang ditampilkan.
+
+```Blade
+
+{{-- ... di dalam file resources/views/admin/reports/monthly.blade.php --}}
+
+{{-- Tampilkan hasil hanya jika karyawan dipilih --}}
+@if ($selectedEmployeeId && !empty($recap))
+    <div class="mb-6">
+        <div class="flex justify-between items-center">
+            <h3 class="text-lg font-semibold">
+                Rekapitulasi untuk Bulan {{ \Carbon\Carbon::create()->month($selectedMonth)->isoFormat('MMMM') }} {{ $selectedYear }}
+            </h3>
+            {{-- TOMBOL EXPORT BARU --}}
+            <a href="{{ route('admin.reports.monthly.export', ['employee_id' => $selectedEmployeeId, 'month' => $selectedMonth, 'year' => $selectedYear]) }}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700">
+                <i class="fas fa-file-excel mr-2"></i> Export ke Excel
+            </a>
+        </div>
+        {{-- ... sisa kode rekapitulasi ... --}}
+    </div>
+    {{-- ... sisa kode ... --}}
+@endif
+```
