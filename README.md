@@ -653,7 +653,7 @@ Buka routes/web.php dan tambahkan rute untuk memicu download.
 
 ```PHP
 // routes/web.php
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'role:admin'])->group(function () {
     // ... rute admin lainnya ...
     // RUTE BARU UNTUK EXPORT LAPORAN BULANAN
     Route::get('/admin/reports/monthly/export', [ReportController::class, 'exportMonthlyExcel'])
