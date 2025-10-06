@@ -7,7 +7,7 @@
 
 # part4-panduan-absensi-project
 
-pada part 4 ini kita akan membuat fitur export data harian, rekap bulanan absen 
+pada part 4 ini kita akan membuat fitur export data excel harian, rekap bulanan absen dan export data ke excel, export data absen milik sendiri ke pdf dan excel
 
 Fitur ini akan menambahkan sebuah tombol di halaman Laporan Harian admin, yang saat diklik akan men-download rekap absensi dalam format file Excel (.xlsx).
 
@@ -812,7 +812,7 @@ class AttendanceController extends Controller
     }
 }
 ```
-Penting: Untuk export PDF, Laravel Excel membutuhkan package tambahan. Jika belum, jalankan perintah ini: ``composer require dompdf/dompdf``
+Penting: Untuk export PDF, Laravel Excel membutuhkan package tambahan. Jika belum, jalankan perintah ini: ``composer require barryvdh/laravel-dompdf``
 
 Langkah 3: Menambahkan Tombol di View
 Buka resources/views/attendance/index.blade.php dan tambahkan tombol-tombol export, misalnya di atas tabel.
@@ -850,3 +850,7 @@ Buka resources/views/attendance/index.blade.php dan tambahkan tombol-tombol expo
     </div>
 </x-app-layout>
 ```
+
+sekarang uji coba kamu test export pdf pada riwayat absen saya (login sebagai akun karyawan) 
+
+
