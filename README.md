@@ -578,4 +578,275 @@ Buka resources/views/admin/reports/monthly.blade.php dan tambahkan tombol export
 @endif
 ```
 
+## 1. Export Excel Rekap Bulanan (Sisi Admin)
+Tujuannya adalah menambahkan tombol "Export Excel" di halaman laporan bulanan yang akan men-download rekapitulasi dan rincian data yang sedang ditampilkan.
 
+Langkah 1: Membuat Class Export Bulanan
+Kita buat class Export baru yang akan menangani logika untuk laporan bulanan.
+
+Jalankan perintah Artisan ini di terminal:
+
+```Bash
+php artisan make:export MonthlyAttendanceExport
+```
+Buka file app/Exports/MonthlyAttendanceExport.php dan modifikasi isinya. Kita akan menerima employeeId, month, dan year untuk mengambil data yang relevan.
+
+```PHP
+<?php
+
+namespace App\Exports;
+
+use App\Models\Attendance;
+use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithMapping;
+use Carbon\Carbon;
+
+class MonthlyAttendanceExport implements FromCollection, WithHeadings, WithMapping
+{
+    protected $employeeId;
+    protected $month;
+    protected $year;
+
+    public function __construct(int $employeeId, int $month, int $year)
+    {
+        $this->employeeId = $employeeId;
+        $this->month = $month;
+        $this->year = $year;
+    }
+
+    public function collection()
+    {
+        return Attendance::with('employee')
+                         ->where('employee_id', $this->employeeId)
+                         ->whereMonth('date', $this->month)
+                         ->whereYear('date', $this->year)
+                         ->orderBy('date', 'asc')
+                         ->get();
+    }
+
+    public function headings(): array
+    {
+        return [
+            'Tanggal',
+            'Jam Masuk',
+            'Jam Pulang',
+            'Status',
+            'Keterangan',
+        ];
+    }
+
+    public function map($attendance): array
+    {
+        return [
+            Carbon::parse($attendance->date)->isoFormat('dddd, D MMMM Y'),
+            $attendance->time_in,
+            $attendance->time_out,
+            $attendance->status,
+            $attendance->notes,
+        ];
+    }
+}
+```
+Langkah 2: Menambahkan Rute & Method Controller
+Buka routes/web.php dan tambahkan rute untuk memicu download.
+
+```PHP
+// routes/web.php
+Route::middleware(['auth'])->group(function () {
+    // ... rute admin lainnya ...
+    // RUTE BARU UNTUK EXPORT LAPORAN BULANAN
+    Route::get('/admin/reports/monthly/export', [ReportController::class, 'exportMonthlyExcel'])
+            ->name('admin.reports.monthly.export');
+});
+```
+Selanjutnya, buka app/Http/Controllers/Admin/ReportController.php dan tambahkan use statement serta method exportMonthlyExcel.
+
+```PHP
+<?php
+// app/Http/Controllers/Admin/ReportController.php
+namespace App\Http\Controllers\Admin;
+
+// ... use statements lainnya ...
+use App\Exports\MonthlyAttendanceExport; // <-- TAMBAHKAN INI
+
+class ReportController extends Controller
+{
+    // ... (method dailyReport & monthlyReport tidak berubah) ...
+    // ... (method exportExcel tidak berubah) ...
+
+    public function exportMonthlyExcel(Request $request)
+    {
+        $employeeId = $request->input('employee_id');
+        $month = $request->input('month', Carbon::now()->month);
+        $year = $request->input('year', Carbon::now()->year);
+
+        // Validasi: pastikan employee_id ada
+        if (!$employeeId) {
+            return redirect()->route('admin.reports.monthly')->with('error', 'Silakan pilih karyawan terlebih dahulu.');
+        }
+        
+        $employee = Employee::findOrFail($employeeId);
+        $monthName = Carbon::create()->month($month)->isoFormat('MMMM');
+        $fileName = 'laporan-bulanan-' . str_replace(' ', '-', $employee->nama_lengkap) . '-' . $monthName . '-' . $year . '.xlsx';
+
+        return Excel::download(new MonthlyAttendanceExport($employeeId, $month, $year), $fileName);
+    }
+}
+```
+Langkah 3: Menambahkan Tombol di View
+Buka resources/views/admin/reports/monthly.blade.php dan tambahkan tombol export. Tombol ini hanya akan muncul jika sebuah laporan sedang ditampilkan.
+
+```Blade
+{{-- ... di dalam file resources/views/admin/reports/monthly.blade.php --}}
+
+{{-- Tampilkan hasil hanya jika karyawan dipilih --}}
+@if ($selectedEmployeeId && !empty($recap))
+    <div class="mb-6">
+        <div class="flex justify-between items-center">
+            <h3 class="text-lg font-semibold">
+                Rekapitulasi untuk Bulan {{ \Carbon\Carbon::create()->month($selectedMonth)->isoFormat('MMMM') }} {{ $selectedYear }}
+            </h3>
+            {{-- TOMBOL EXPORT BARU --}}
+            <a href="{{ route('admin.reports.monthly.export', ['employee_id' => $selectedEmployeeId, 'month' => $selectedMonth, 'year' => $selectedYear]) }}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700">
+                <i class="fas fa-file-excel mr-2"></i> Export ke Excel
+            </a>
+        </div>
+        {{-- ... sisa kode rekapitulasi ... --}}
+    </div>
+    {{-- ... sisa kode ... --}}
+@endif
+```
+## 2. Export Excel/PDF Riwayat Absensi (Sisi Karyawan)
+Sekarang kita berikan kemampuan bagi karyawan untuk men-download riwayat absensi mereka sendiri.
+
+Langkah 1: Membuat Class Export
+Jalankan perintah Artisan ini di terminal:
+
+```Bash
+php artisan make:export MyAttendanceHistoryExport
+```
+Buka app/Exports/MyAttendanceHistoryExport.php dan modifikasi isinya.
+
+```PHP
+<?php
+
+namespace App\Exports;
+
+use App\Models\Attendance;
+use Illuminate\Support\Facades\Auth;
+use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithMapping;
+use Carbon\Carbon;
+
+class MyAttendanceHistoryExport implements FromCollection, WithHeadings, WithMapping
+{
+    public function collection()
+    {
+        // Ambil data absensi hanya untuk user yang sedang login
+        return Attendance::where('employee_id', Auth::user()->employee->id)
+                         ->latest()
+                         ->get();
+    }
+    
+    public function headings(): array
+    {
+        return ['Tanggal', 'Jam Masuk', 'Jam Pulang', 'Status', 'Keterangan'];
+    }
+
+    public function map($attendance): array
+    {
+        return [
+            Carbon::parse($attendance->date)->isoFormat('dddd, D MMMM Y'),
+            $attendance->time_in,
+            $attendance->time_out,
+            $attendance->status,
+            $attendance->notes,
+        ];
+    }
+}
+```
+Langkah 2: Menambahkan Rute & Method Controller
+Buka routes/web.php dan tambahkan rute-rute berikut di dalam grup middleware('auth').
+
+```PHP
+// routes/web.php
+use App\Http\Controllers\AttendanceController;
+
+Route::middleware('auth')->group(function () {
+    // ... rute lainnya untuk karyawan ...
+    // RUTE BARU UNTUK EXPORT RIWAYAT KARYAWAN
+    Route::get('/attendance/export/excel', [AttendanceController::class, 'exportMyHistoryExcel'])->name('attendance.export.excel');
+    Route::get('/attendance/export/pdf', [AttendanceController::class, 'exportMyHistoryPdf'])->name('attendance.export.pdf');
+});
+```
+Selanjutnya, buka app/Http/Controllers/AttendanceController.php dan tambahkan use statement serta dua method baru.
+
+```PHP
+<?php
+// app/Http/Controllers/AttendanceController.php
+namespace App\Http\Controllers;
+
+// ... use statements lainnya ...
+use App\Exports\MyAttendanceHistoryExport; // <-- TAMBAHKAN INI
+use Maatwebsite\Excel\Facades\Excel;       // <-- TAMBAHKAN INI
+
+class AttendanceController extends Controller
+{
+    // ... (method index, clockIn, clockOut, dll) ...
+
+    public function exportMyHistoryExcel()
+    {
+        $userName = str_replace(' ', '-', Auth::user()->name);
+        $fileName = 'riwayat-absensi-' . $userName . '.xlsx';
+        return Excel::download(new MyAttendanceHistoryExport, $fileName);
+    }
+
+    public function exportMyHistoryPdf()
+    {
+        // Pastikan Anda sudah menginstall dompdf: composer require dompdf/dompdf
+        $userName = str_replace(' ', '-', Auth::user()->name);
+        $fileName = 'riwayat-absensi-' . $userName . '.pdf';
+        return Excel::download(new MyAttendanceHistoryExport, $fileName, \Maatwebsite\Excel\Excel::DOMPDF);
+    }
+}
+```
+Penting: Untuk export PDF, Laravel Excel membutuhkan package tambahan. Jika belum, jalankan perintah ini: ``composer require dompdf/dompdf``
+
+Langkah 3: Menambahkan Tombol di View
+Buka resources/views/attendance/index.blade.php dan tambahkan tombol-tombol export, misalnya di atas tabel.
+
+```Blade
+{{-- resources/views/attendance/index.blade.php --}}
+<x-app-layout>
+    <x-slot name="header">
+        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
+            {{ __('Riwayat Absensi Saya') }}
+        </h2>
+    </x-slot>
+    <div class="py-12">
+        <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
+            <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg">
+                <div class="p-6 text-gray-900">
+
+                    {{-- TOMBOL-TOMBOL EXPORT BARU --}}
+                    <div class="flex justify-end space-x-2 mb-4">
+                        <a href="{{ route('attendance.export.excel') }}" class="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md">
+                            <i class="fas fa-file-excel mr-2"></i> Export Excel
+                        </a>
+                        <a href="{{ route('attendance.export.pdf') }}" class="inline-flex items-center px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md">
+                            <i class="fas fa-file-pdf mr-2"></i> Export PDF
+                        </a>
+                    </div>
+
+                    {{-- Tabel Riwayat Absensi --}}
+                    <div class="overflow-x-auto">
+                        {{-- ... sisa kode tabel tidak berubah ... --}}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</x-app-layout>
+```
