@@ -89,8 +89,9 @@ class DailyAttendanceExport implements FromCollection, WithHeadings, WithMapping
      */
     public function map($attendance): array
     {
+        $nip = $attendance->employee->nip ?? 'N/A';
         return [
-            $attendance->employee->nip ?? 'N/A',
+            "'" . $nip,  // Prepend single quote untuk memaksa sebagai teks di Excel
             $attendance->employee->nama_lengkap ?? 'Karyawan Tidak Ditemukan',
             Carbon::parse($attendance->date)->format('d-m-Y'),
             $attendance->time_in,
