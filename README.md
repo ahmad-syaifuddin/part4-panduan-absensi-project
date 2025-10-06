@@ -853,4 +853,163 @@ Buka resources/views/attendance/index.blade.php dan tambahkan tombol-tombol expo
 
 sekarang uji coba kamu test export pdf pada riwayat absen saya (login sebagai akun karyawan) 
 
+--- 
 
+# Cara terbaik untuk mempercantik tampilan PDF adalah dengan membuat ``template HTML khusus (menggunakan Blade view)`` untuk PDF tersebut. Jadi, kita akan mendesain sebuah halaman dengan HTML dan CSS, lalu menyuruh Laravel Excel untuk mengubah halaman tersebut menjadi PDF.
+
+Mari kita lakukan langkah demi langkah.
+
+## Langkah 1: Membuat View Template untuk PDF
+Pertama, kita buat file Blade baru yang akan menjadi desain PDF kita.
+
+Buat file baru di: resources/views/attendance/history_pdf.blade.php
+
+Isi file tersebut dengan kode berikut. Kode ini berisi struktur HTML lengkap dengan CSS inline untuk styling.
+
+```Blade
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Riwayat Absensi</title>
+    <style>
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            font-size: 12px;
+            color: #333;
+        }
+        .container {
+            width: 100%;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .header p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .table th, .table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: right;
+            font-size: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Laporan Riwayat Absensi</h1>
+            <p><strong>Nama Karyawan:</strong> {{ $employee->nama_lengkap }}</p>
+            <p><strong>NIP:</strong> {{ $employee->nip }}</p>
+        </div>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>No</th>
+                    <th>Tanggal</th>
+                    <th>Jam Masuk</th>
+                    <th>Jam Pulang</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @forelse ($attendances as $attendance)
+                    <tr>
+                        <td>{{ $loop->iteration }}</td>
+                        <td>{{ \Carbon\Carbon::parse($attendance->date)->isoFormat('dddd, D MMMM Y') }}</td>
+                        <td>{{ $attendance->time_in ?? '--:--' }}</td>
+                        <td>{{ $attendance->time_out ?? '--:--' }}</td>
+                        <td>{{ $attendance->status }}</td>
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="5" style="text-align: center;">Tidak ada data riwayat absensi.</td>
+                    </tr>
+                @endforelse
+            </tbody>
+        </table>
+        
+        <div class="footer">
+            Dicetak pada: {{ \Carbon\Carbon::now('Asia/Makassar')->isoFormat('D MMMM Y, HH:mm') }} WITA
+        </div>
+    </div>
+</body>
+</html>
+```
+## Langkah 2: Memodifikasi Class Export
+Sekarang, kita ubah MyAttendanceHistoryExport agar menggunakan template Blade di atas, bukan lagi data koleksi mentah.
+
+Buka file app/Exports/MyAttendanceHistoryExport.php dan ganti seluruh isinya dengan kode ini:
+
+```PHP
+<?php
+
+namespace App\Exports;
+
+use App\Models\Attendance;
+use Illuminate\Contracts\View\View; // <-- Import View
+use Maatwebsite\Excel\Concerns\FromView; // <-- Ganti concern menjadi FromView
+use Illuminate\Support\Facades\Auth;
+
+// Implementasikan FromView, bukan FromCollection, dll.
+class MyAttendanceHistoryExport implements FromView
+{
+    /**
+     * Method ini akan merender view Blade dan datanya.
+     */
+    public function view(): View
+    {
+        // Ambil data karyawan yang sedang login
+        $employee = Auth::user()->employee;
+
+        // Ambil riwayat absensinya
+        $attendances = Attendance::where('employee_id', $employee->id)
+                                 ->latest()
+                                 ->get();
+
+        // Kembalikan view beserta datanya
+        return view('attendance.history_pdf', [
+            'attendances' => $attendances,
+            'employee' => $employee
+        ]);
+    }
+}
+```
+Perubahan Kunci:
+Kita mengganti FromCollection, WithHeadings, dan WithMapping dengan satu concern yang lebih cocok: FromView.
+
+Kita menghapus semua method lama (collection, headings, map).
+
+Kita membuat satu method baru yang wajib ada untuk FromView, yaitu view(). Method ini mengambil data dan melemparnya ke file attendance.history_pdf.blade.php yang baru saja kita buat.
+
+## Langkah 3: Selesai! (Tidak Perlu Mengubah Controller)
+Anda tidak perlu mengubah apapun di AttendanceController. Method exportMyHistoryPdf() Anda akan tetap berfungsi karena logikanya sudah dipindahkan sepenuhnya ke dalam class MyAttendanceHistoryExport.
+
+✅ Uji Coba
+Sekarang, login sebagai karyawan, buka halaman "Riwayat Absensi", dan klik tombol "Export PDF". File PDF yang di-download sekarang akan memiliki tampilan yang jauh lebih profesional, lengkap dengan header, judul, dan tabel yang rapi.
+
+DONEE !!! 
+
+NEXT LAGI !!!
